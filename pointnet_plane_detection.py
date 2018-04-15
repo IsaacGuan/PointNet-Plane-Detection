@@ -142,7 +142,9 @@ def get_loss(l_pred, seg_pred, label, seg, weight, end_points):
 
     # size of seg_pred is batch_size x point_num x part_cat_num
     # size of seg is batch_size x point_num
-    per_instance_seg_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=seg_pred, labels=seg), axis=1)
+    class_weights = tf.constant([0.3, 0.7])
+    weights = tf.gather(class_weights, seg)
+    per_instance_seg_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=seg_pred, labels=seg) * weights, axis=1)
     seg_loss = tf.reduce_mean(per_instance_seg_loss)
 
     per_instance_seg_pred_res = tf.argmax(seg_pred, 2)
