@@ -10,11 +10,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.dirname(BASE_DIR))
 import provider
-import pointnet_plane_detection as model
 
 # DEFAULT SETTINGS
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=1, help='GPU to use [default: GPU 0]')
+parser.add_argument('--model', choices=["1", "2"], default="1", help='Model to use [1/2]')
 parser.add_argument('--batch', type=int, default=32, help='Batch Size during training [default: 32]')
 parser.add_argument('--epoch', type=int, default=100, help='Epoch to run [default: 100]')
 parser.add_argument('--point_num', type=int, default=2048, help='Point Number [256/512/1024/2048]')
@@ -29,10 +29,14 @@ point_num = FLAGS.point_num
 batch_size = FLAGS.batch
 output_dir = FLAGS.output_dir
 
+if FLAGS.model == "1":
+	model = __import__('pointnet_plane_detection')
+if FLAGS.model == "2":
+	model = __import__('pointnet_plane_detection2')
+
 if not os.path.exists(output_dir):
     os.mkdir(output_dir)
 
-NUM_CATEGORIES = 1
 NUM_PART_CATS = 2
 
 print('#### Batch Size: {0}'.format(batch_size))
@@ -72,21 +76,13 @@ def printout(flog, data):
 
 def placeholder_inputs():
     pointclouds_ph = tf.placeholder(tf.float32, shape=(batch_size, point_num, 3))
-    input_label_ph = tf.placeholder(tf.float32, shape=(batch_size, NUM_CATEGORIES))
-    labels_ph = tf.placeholder(tf.int32, shape=(batch_size))
     seg_ph = tf.placeholder(tf.int32, shape=(batch_size, point_num))
-    return pointclouds_ph, input_label_ph, labels_ph, seg_ph
-
-def convert_label_to_one_hot(labels):
-    label_one_hot = np.zeros((labels.shape[0], NUM_CATEGORIES))
-    for idx in range(labels.shape[0]):
-        label_one_hot[idx, labels[idx]] = 1
-    return label_one_hot
+    return pointclouds_ph, seg_ph
 
 def train():
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(FLAGS.gpu)):
-            pointclouds_ph, input_label_ph, labels_ph, seg_ph = placeholder_inputs()
+            pointclouds_ph, seg_ph = placeholder_inputs()
             is_training_ph = tf.placeholder(tf.bool, shape=())
 
             batch = tf.Variable(0, trainable=False)
@@ -111,28 +107,21 @@ def train():
             batch_op = tf.summary.scalar('batch_number', batch)
             bn_decay_op = tf.summary.scalar('bn_decay', bn_decay)
  
-            labels_pred, seg_pred, end_points = model.get_model(pointclouds_ph, input_label_ph, \
-                    is_training=is_training_ph, bn_decay=bn_decay, cat_num=NUM_CATEGORIES, \
-                    part_num=NUM_PART_CATS, batch_size=batch_size, num_point=point_num, weight_decay=FLAGS.wd)
+            seg_pred, end_points = model.get_model(pointclouds_ph, is_training=is_training_ph, \
+            	bn_decay=bn_decay, part_num=NUM_PART_CATS, batch_size=batch_size, \
+            	num_point=point_num, weight_decay=FLAGS.wd)
 
             # model.py defines both classification net and segmentation net, which share the common global feature extractor network.
             # In model.get_loss, we define the total loss to be weighted sum of the classification and segmentation losses.
             # Here, we only train for segmentation network. Thus, we set weight to be 1.0.
-            loss, label_loss, per_instance_label_loss, seg_loss, per_instance_seg_loss, per_instance_seg_pred_res  \
-                = model.get_loss(labels_pred, seg_pred, labels_ph, seg_ph, 1.0, end_points)
+            loss, seg_loss, per_instance_seg_loss, per_instance_seg_pred_res  \
+                = model.get_loss(seg_pred, seg_ph, 1.0, end_points)
 
             total_training_loss_ph = tf.placeholder(tf.float32, shape=())
             total_testing_loss_ph = tf.placeholder(tf.float32, shape=())
 
-            label_training_loss_ph = tf.placeholder(tf.float32, shape=())
-            label_testing_loss_ph = tf.placeholder(tf.float32, shape=())
-
             seg_training_loss_ph = tf.placeholder(tf.float32, shape=())
             seg_testing_loss_ph = tf.placeholder(tf.float32, shape=())
-
-            label_training_acc_ph = tf.placeholder(tf.float32, shape=())
-            label_testing_acc_ph = tf.placeholder(tf.float32, shape=())
-            label_testing_acc_avg_cat_ph = tf.placeholder(tf.float32, shape=())
 
             seg_training_acc_ph = tf.placeholder(tf.float32, shape=())
             seg_testing_acc_ph = tf.placeholder(tf.float32, shape=())
@@ -141,15 +130,8 @@ def train():
             total_train_loss_sum_op = tf.summary.scalar('total_training_loss', total_training_loss_ph)
             total_test_loss_sum_op = tf.summary.scalar('total_testing_loss', total_testing_loss_ph)
 
-            label_train_loss_sum_op = tf.summary.scalar('label_training_loss', label_training_loss_ph)
-            label_test_loss_sum_op = tf.summary.scalar('label_testing_loss', label_testing_loss_ph)
-
             seg_train_loss_sum_op = tf.summary.scalar('seg_training_loss', seg_training_loss_ph)
             seg_test_loss_sum_op = tf.summary.scalar('seg_testing_loss', seg_testing_loss_ph)
-
-            label_train_acc_sum_op = tf.summary.scalar('label_training_acc', label_training_acc_ph)
-            label_test_acc_sum_op = tf.summary.scalar('label_testing_acc', label_testing_acc_ph)
-            label_test_acc_avg_cat_op = tf.summary.scalar('label_testing_acc_avg_cat', label_testing_acc_avg_cat_ph)
 
             seg_train_acc_sum_op = tf.summary.scalar('seg_training_acc', seg_training_acc_ph)
             seg_test_acc_sum_op = tf.summary.scalar('seg_testing_acc', seg_testing_acc_ph)
@@ -186,19 +168,13 @@ def train():
             train_filename = os.path.join(hdf5_data_dir, "data.h5")
             printout(flog, 'Loading train file ' + train_filename)
 
-            cur_data, cur_labels, cur_seg = provider.loadDataFile_with_seg(train_filename)
-            cur_data, cur_labels, order = provider.shuffle_data(cur_data, np.squeeze(cur_labels))
-            cur_seg = cur_seg[order, ...]
+            cur_data, cur_seg = provider.loadDataFile_with_seg(train_filename)
 
-            cur_labels_one_hot = convert_label_to_one_hot(cur_labels)
-
-            num_data = len(cur_labels)
+            num_data = len(cur_data)
             num_batch = num_data // batch_size
 
             total_loss = 0.0
-            total_label_loss = 0.0
             total_seg_loss = 0.0
-            total_label_acc = 0.0
             total_seg_acc = 0.0
 
             for i in range(num_batch):
@@ -207,55 +183,50 @@ def train():
 
                 feed_dict = {
                 pointclouds_ph: cur_data[begidx: endidx, ...], 
-                labels_ph: cur_labels[begidx: endidx, ...], 
-                input_label_ph: cur_labels_one_hot[begidx: endidx, ...], 
                 seg_ph: cur_seg[begidx: endidx, ...],
                 is_training_ph: is_training, 
                 }
 
-                _, loss_val, label_loss_val, seg_loss_val, per_instance_label_loss_val, \
-                per_instance_seg_loss_val, label_pred_val, seg_pred_val, pred_seg_res \
-                = sess.run([train_op, loss, label_loss, seg_loss, per_instance_label_loss, \
-                    per_instance_seg_loss, labels_pred, seg_pred, per_instance_seg_pred_res], \
-                    feed_dict=feed_dict)
+                _, loss_val, seg_loss_val, per_instance_seg_loss_val, seg_pred_val, pred_seg_res \
+                = sess.run([train_op, loss, seg_loss, per_instance_seg_loss, seg_pred, \
+                	per_instance_seg_pred_res], feed_dict=feed_dict)
+
+                '''
+                seg_pred_res = sess.run([seg_pred], feed_dict={
+                        pointclouds_ph: cur_data[begidx: endidx, ...],
+                        is_training_ph: is_training,
+                    })
+                seg_pred_res = np.array(seg_pred_res)[0, ...][0, ...]
+
+                seg_pred_val = np.argmax(seg_pred_res, axis=1)[:batch_size*point_num]
+                print seg_pred_val
+                '''
 
                 per_instance_part_acc = np.mean(pred_seg_res == cur_seg[begidx: endidx, ...], axis=1)
                 average_part_acc = np.mean(per_instance_part_acc)
 
                 total_loss += loss_val
-                total_label_loss += label_loss_val
                 total_seg_loss += seg_loss_val
 
-                per_instance_label_pred = np.argmax(label_pred_val, axis=1)
-                total_label_acc += np.mean(np.float32(per_instance_label_pred == cur_labels[begidx: endidx, ...]))
                 total_seg_acc += average_part_acc
 
             total_loss = total_loss * 1.0 / num_batch
-            total_label_loss = total_label_loss * 1.0 / num_batch
             total_seg_loss = total_seg_loss * 1.0 / num_batch
-            total_label_acc = total_label_acc * 1.0 / num_batch
             total_seg_acc = total_seg_acc * 1.0 / num_batch
 
-            lr_sum, bn_decay_sum, batch_sum, train_loss_sum, train_label_acc_sum, \
-            train_label_loss_sum, train_seg_loss_sum, train_seg_acc_sum = sess.run(\
-                [lr_op, bn_decay_op, batch_op, total_train_loss_sum_op, label_train_acc_sum_op, \
-                label_train_loss_sum_op, seg_train_loss_sum_op, seg_train_acc_sum_op], \
-                feed_dict={total_training_loss_ph: total_loss, label_training_loss_ph: total_label_loss, \
-                seg_training_loss_ph: total_seg_loss, label_training_acc_ph: total_label_acc, \
-                seg_training_acc_ph: total_seg_acc})
+            lr_sum, bn_decay_sum, batch_sum, train_loss_sum, train_seg_loss_sum, train_seg_acc_sum \
+             = sess.run([lr_op, bn_decay_op, batch_op, total_train_loss_sum_op, \
+                seg_train_loss_sum_op, seg_train_acc_sum_op], feed_dict={total_training_loss_ph: total_loss, \
+                seg_training_loss_ph: total_seg_loss, seg_training_acc_ph: total_seg_acc})
 
             train_writer.add_summary(train_loss_sum, epoch_num)
-            train_writer.add_summary(train_label_loss_sum, epoch_num)
             train_writer.add_summary(train_seg_loss_sum, epoch_num)
             train_writer.add_summary(lr_sum, epoch_num)
             train_writer.add_summary(bn_decay_sum, epoch_num)
-            train_writer.add_summary(train_label_acc_sum, epoch_num)
             train_writer.add_summary(train_seg_acc_sum, epoch_num)
             train_writer.add_summary(batch_sum, epoch_num)
 
             printout(flog, '\tTraining Total Mean_loss: %f' % total_loss)
-            printout(flog, '\t\tTraining Label Mean_loss: %f' % total_label_loss)
-            printout(flog, '\t\tTraining Label Accuracy: %f' % total_label_acc)
             printout(flog, '\t\tTraining Seg Mean_loss: %f' % total_seg_loss)
             printout(flog, '\t\tTraining Seg Accuracy: %f' % total_seg_acc)
 
@@ -263,25 +234,16 @@ def train():
             is_training = False
 
             total_loss = 0.0
-            total_label_loss = 0.0
             total_seg_loss = 0.0
-            total_label_acc = 0.0
             total_seg_acc = 0.0
             total_seen = 0
-
-            total_label_acc_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.float32)
-            total_seg_acc_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.float32)
-            total_seen_per_cat = np.zeros((NUM_CATEGORIES)).astype(np.int32)
 
             test_filename = os.path.join(hdf5_data_dir, "data.h5")
             printout(flog, 'Loading test file ' + test_filename)
 
-            cur_data, cur_labels, cur_seg = provider.loadDataFile_with_seg(test_filename)
-            cur_labels = np.squeeze(cur_labels)
+            cur_data, cur_seg = provider.loadDataFile_with_seg(test_filename)
 
-            cur_labels_one_hot = convert_label_to_one_hot(cur_labels)
-
-            num_data = len(cur_labels)
+            num_data = len(cur_data)
             num_batch = num_data // batch_size
 
             for i in range(num_batch):
@@ -289,62 +251,49 @@ def train():
                 endidx = (i + 1) * batch_size
                 feed_dict = {
                         pointclouds_ph: cur_data[begidx: endidx, ...], 
-                        labels_ph: cur_labels[begidx: endidx, ...], 
-                        input_label_ph: cur_labels_one_hot[begidx: endidx, ...], 
                         seg_ph: cur_seg[begidx: endidx, ...],
                         is_training_ph: is_training, 
                         }
 
-                loss_val, label_loss_val, seg_loss_val, per_instance_label_loss_val, \
-                        per_instance_seg_loss_val, label_pred_val, seg_pred_val, pred_seg_res \
-                        = sess.run([loss, label_loss, seg_loss, per_instance_label_loss, \
-                        per_instance_seg_loss, labels_pred, seg_pred, per_instance_seg_pred_res], \
-                        feed_dict=feed_dict)
+                loss_val, seg_loss_val, per_instance_seg_loss_val, seg_pred_val, pred_seg_res \
+                = sess.run([loss, seg_loss, per_instance_seg_loss, seg_pred, \
+                	per_instance_seg_pred_res], feed_dict=feed_dict)
+
+                '''
+                seg_pred_res = sess.run([seg_pred], feed_dict={
+                        pointclouds_ph: cur_data[begidx: endidx, ...],
+                        is_training_ph: is_training,
+                    })
+                seg_pred_res = np.array(seg_pred_res)[0, ...][0, ...]
+
+                seg_pred_val = np.argmax(seg_pred_res, axis=1)[:batch_size*point_num]
+                print seg_pred_val
+                '''
 
                 per_instance_part_acc = np.mean(pred_seg_res == cur_seg[begidx: endidx, ...], axis=1)
                 average_part_acc = np.mean(per_instance_part_acc)
 
                 total_seen += 1
                 total_loss += loss_val
-                total_label_loss += label_loss_val
                 total_seg_loss += seg_loss_val
                 
-                per_instance_label_pred = np.argmax(label_pred_val, axis=1)
-                total_label_acc += np.mean(np.float32(per_instance_label_pred == cur_labels[begidx: endidx, ...]))
                 total_seg_acc += average_part_acc
 
-                for shape_idx in range(begidx, endidx):
-                    total_seen_per_cat[cur_labels[shape_idx]] += 1
-                    total_label_acc_per_cat[cur_labels[shape_idx]] += np.int32(per_instance_label_pred[shape_idx-begidx] == cur_labels[shape_idx])
-                    total_seg_acc_per_cat[cur_labels[shape_idx]] += per_instance_part_acc[shape_idx - begidx]
-
             total_loss = total_loss * 1.0 / total_seen
-            total_label_loss = total_label_loss * 1.0 / total_seen
             total_seg_loss = total_seg_loss * 1.0 / total_seen
-            total_label_acc = total_label_acc * 1.0 / total_seen
             total_seg_acc = total_seg_acc * 1.0 / total_seen
 
-            test_loss_sum, test_label_acc_sum, test_label_loss_sum, test_seg_loss_sum, test_seg_acc_sum = sess.run(\
-                    [total_test_loss_sum_op, label_test_acc_sum_op, label_test_loss_sum_op, seg_test_loss_sum_op, seg_test_acc_sum_op], \
-                    feed_dict={total_testing_loss_ph: total_loss, label_testing_loss_ph: total_label_loss, \
-                    seg_testing_loss_ph: total_seg_loss, label_testing_acc_ph: total_label_acc, seg_testing_acc_ph: total_seg_acc})
+            test_loss_sum, test_seg_loss_sum, test_seg_acc_sum \
+             = sess.run([total_test_loss_sum_op, seg_test_loss_sum_op, seg_test_acc_sum_op], \
+             	feed_dict={total_testing_loss_ph: total_loss, seg_testing_loss_ph: total_seg_loss, seg_testing_acc_ph: total_seg_acc})
 
             test_writer.add_summary(test_loss_sum, epoch_num+1)
-            test_writer.add_summary(test_label_loss_sum, epoch_num+1)
             test_writer.add_summary(test_seg_loss_sum, epoch_num+1)
-            test_writer.add_summary(test_label_acc_sum, epoch_num+1)
             test_writer.add_summary(test_seg_acc_sum, epoch_num+1)
 
             printout(flog, '\tTesting Total Mean_loss: %f' % total_loss)
-            printout(flog, '\t\tTesting Label Mean_loss: %f' % total_label_loss)
-            printout(flog, '\t\tTesting Label Accuracy: %f' % total_label_acc)
             printout(flog, '\t\tTesting Seg Mean_loss: %f' % total_seg_loss)
             printout(flog, '\t\tTesting Seg Accuracy: %f' % total_seg_acc)
-
-            for cat_idx in range(NUM_CATEGORIES):
-                if total_seen_per_cat[cat_idx] > 0:
-                    printout(flog, '\n\t\tObject Number: %d' % (total_seen_per_cat[cat_idx]))
-                    printout(flog, '\t\tSeg Accuracy: %f' % (total_seg_acc_per_cat[cat_idx]/total_seen_per_cat[cat_idx]))
 
         if not os.path.exists(MODEL_STORAGE_PATH):
             os.mkdir(MODEL_STORAGE_PATH)
