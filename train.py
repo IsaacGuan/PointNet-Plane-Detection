@@ -15,7 +15,7 @@ import provider
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', type=int, default=1, help='GPU to use [default: GPU 0]')
 parser.add_argument('--model', choices=["1", "2"], default="1", help='Model to use [1/2]')
-parser.add_argument('--batch', type=int, default=32, help='Batch Size during training [default: 32]')
+parser.add_argument('--batch', type=int, default=8, help='Batch Size during training [default: 8]')
 parser.add_argument('--epoch', type=int, default=100, help='Epoch to run [default: 100]')
 parser.add_argument('--point_num', type=int, default=2048, help='Point Number [256/512/1024/2048]')
 parser.add_argument('--output_dir', type=str, default='train_results', help='Directory that stores all training logs and trained models')
@@ -165,7 +165,7 @@ def train():
         def train_one_epoch(epoch_num):
             is_training = True
 
-            train_filename = os.path.join(hdf5_data_dir, "data.h5")
+            train_filename = os.path.join(hdf5_data_dir, "data_training.h5")
             printout(flog, 'Loading train file ' + train_filename)
 
             cur_data, cur_seg = provider.loadDataFile_with_seg(train_filename)
@@ -238,7 +238,7 @@ def train():
             total_seg_acc = 0.0
             total_seen = 0
 
-            test_filename = os.path.join(hdf5_data_dir, "data.h5")
+            test_filename = os.path.join(hdf5_data_dir, "data_testing.h5")
             printout(flog, 'Loading test file ' + test_filename)
 
             cur_data, cur_seg = provider.loadDataFile_with_seg(test_filename)
