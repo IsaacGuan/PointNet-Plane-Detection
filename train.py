@@ -2,6 +2,7 @@ import argparse
 import subprocess
 import tensorflow as tf
 import numpy as np
+import matplotlib.pyplot as plt
 from datetime import datetime
 import json
 import os
@@ -70,6 +71,10 @@ SUMMARIES_FOLDER =  os.path.join(output_dir, 'summaries')
 if not os.path.exists(SUMMARIES_FOLDER):
     os.mkdir(SUMMARIES_FOLDER)
 
+DIAGRAMS_FOLDER =  os.path.join(output_dir, 'diagrams')
+if not os.path.exists(DIAGRAMS_FOLDER):
+    os.mkdir(DIAGRAMS_FOLDER)
+
 def printout(flog, data):
 	print(data)
 	flog.write(data + '\n')
@@ -80,6 +85,8 @@ def placeholder_inputs():
     return pointclouds_ph, seg_ph
 
 def train():
+    training_loss_value = []
+
     with tf.Graph().as_default():
         with tf.device('/gpu:'+str(FLAGS.gpu)):
             pointclouds_ph, seg_ph = placeholder_inputs()
@@ -230,6 +237,8 @@ def train():
             printout(flog, '\t\tTraining Seg Mean_loss: %f' % total_seg_loss)
             printout(flog, '\t\tTraining Seg Accuracy: %f' % total_seg_acc)
 
+            training_loss_value.append(total_loss)
+
         def eval_one_epoch(epoch_num):
             is_training = False
 
@@ -310,6 +319,13 @@ def train():
                 printout(flog, 'Successfully store the checkpoint model into ' + cp_filename)
 
             flog.flush()
+
+        plt.plot(np.arange(1, TRAINING_EPOCHES + 1), training_loss_value, 'ro')
+        plt.plot(np.arange(1, TRAINING_EPOCHES + 1), training_loss_value)
+        plt.ylabel('Total Mean Loss')
+        plt.xlabel('Epoch')
+        plt.title('Total Mean Loss per Epoch')
+        plt.savefig(DIAGRAMS_FOLDER + '/total_mean_loss.png')
 
         flog.close()
 
