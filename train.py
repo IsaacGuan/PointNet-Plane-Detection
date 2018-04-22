@@ -308,7 +308,7 @@ def train():
             os.mkdir(MODEL_STORAGE_PATH)
 
         for epoch in range(TRAINING_EPOCHES):
-            printout(flog, '\n>>> Training for the epoch %d/%d ...' % (epoch, TRAINING_EPOCHES))
+            printout(flog, '\n>>> Training for the epoch %d/%d ...' % (epoch+1, TRAINING_EPOCHES))
             train_one_epoch(epoch)
 
             printout(flog, '\n<<< Testing on the test dataset ...')
