@@ -1,8 +1,16 @@
 points/table1.pts points_label/table1.seg
+points/chair1.pts points_label/chair1.seg
 points/table2.pts points_label/table2.seg
+points/chair2.pts points_label/chair2.seg
 points/table3.pts points_label/table3.seg
+points/chair3.pts points_label/chair3.seg
 points/table4.pts points_label/table4.seg
+points/chair4.pts points_label/chair4.seg
+points/chair5.pts points_label/chair5.seg
 points/table5.pts points_label/table5.seg
 points/table6.pts points_label/table6.seg
+points/chair6.pts points_label/chair6.seg
+points/chair7.pts points_label/chair7.seg
 points/table7.pts points_label/table7.seg
 points/table8.pts points_label/table8.seg
+points/chair8.pts points_label/chair8.seg
