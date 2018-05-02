@@ -4,7 +4,8 @@ from plyfile import PlyData, PlyElement
 
 filenames = [line.rstrip() for line in open("filelist", 'r')]
 
-f = h5py.File("./hdf5_data/data_test.h5", 'w')
+#f = h5py.File("./hdf5_data/data_test.h5", 'w')
+f = h5py.File("./hdf5_data/data_training.h5", 'w')
 
 a_data = np.zeros((len(filenames), 2048, 3))
 a_pid = np.zeros((len(filenames), 2048), dtype = np.uint8)	
